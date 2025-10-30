@@ -1,5 +1,4 @@
 import threading
-import random
 import zlib
 from mensaje import Mensaje
 from estadoMensaje import EstadoMensaje
@@ -16,6 +15,9 @@ class ClienteChat:
         self.protocol_id = protocol_id
         self.estados = {}
         self.stop_event = threading.Event()
+        # Estado de turnos
+        self.waiting_for_response_id = None  # si envié solicitud
+        self.pending_request_id = None       # si debo responder
 
     def iniciar_recepcion(self):
         """Lanza un hilo para recibir mensajes."""
@@ -43,9 +45,14 @@ class ClienteChat:
                 # Notificación RECIBIDO
                 ack = self._crear_control(mensaje.id_mensaje, Mensaje.TIPO_RECIBIDO)
                 self.gestor.enviar_bytes(ack.codificar())
-                # Simular lectura aleatoria
-                threading.Timer(random.uniform(1, 5),
-                                self._simular_lectura, args=(mensaje,)).start()
+                # Enforzar turno
+                if self.pending_request_id is not None:
+                    print(f"[{self.nombre}] Solicitud ya pendiente (id={self.pending_request_id}). Ignorando nueva.")
+                elif self.waiting_for_response_id is not None:
+                    print(f"[{self.nombre}] Esperando respuesta (id={self.waiting_for_response_id}). No se acepta nueva solicitud.")
+                else:
+                    self.pending_request_id = mensaje.id_mensaje
+                    print(f"[{self.nombre}] Debe responder a id={self.pending_request_id}.")
 
             elif tipo == Mensaje.TIPO_RECIBIDO:
                 self.estados[mensaje.id_mensaje] = EstadoMensaje.RECIBIDO
@@ -54,16 +61,33 @@ class ClienteChat:
             elif tipo == Mensaje.TIPO_LEIDO:
                 self.estados[mensaje.id_mensaje] = EstadoMensaje.LEIDO
                 print(f"[{self.nombre}] Confirmación: mensaje {mensaje.id_mensaje} leído.")
+            elif tipo == Mensaje.TIPO_RESPUESTA:
+                if self.waiting_for_response_id == mensaje.id_mensaje:
+                    print(f"[{self.nombre}] Respuesta recibida para {mensaje.id_mensaje}: {mensaje.texto()}")
+                    self.waiting_for_response_id = None
+                else:
+                    print(f"[{self.nombre}] RESPUESTA inesperada para id {mensaje.id_mensaje}: {mensaje.texto()}")
 
     def enviar_texto(self, texto):
-        """Crea y envía un mensaje."""
-        mensaje = Mensaje(texto, id_protocolo=self.protocol_id)
+        """Envía una nueva solicitud o responde si hay una pendiente."""
         try:
-            self.gestor.enviar_bytes(mensaje.codificar())
-            self.estados[mensaje.id_mensaje] = EstadoMensaje.ENVIADO
-            print(f"[{self.nombre}] Mensaje enviado (id={mensaje.id_mensaje})")
+            if self.pending_request_id is not None:
+                # responder
+                resp = Mensaje(texto, id_protocolo=self.protocol_id, id_mensaje=self.pending_request_id, tipo_operacion=Mensaje.TIPO_RESPUESTA)
+                self.gestor.enviar_bytes(resp.codificar())
+                print(f"[{self.nombre}] Respuesta enviada a (id={self.pending_request_id})")
+                self.pending_request_id = None
+            else:
+                if self.waiting_for_response_id is not None:
+                    print(f"[{self.nombre}] Bloqueado. Esperando respuesta (id={self.waiting_for_response_id}).")
+                    return
+                mensaje = Mensaje(texto, id_protocolo=self.protocol_id)
+                self.gestor.enviar_bytes(mensaje.codificar())
+                self.estados[mensaje.id_mensaje] = EstadoMensaje.ENVIADO
+                self.waiting_for_response_id = mensaje.id_mensaje
+                print(f"[{self.nombre}] Mensaje enviado (id={mensaje.id_mensaje}), esperando respuesta.")
         except Exception as e:
-            self.estados[mensaje.id_mensaje] = EstadoMensaje.ERROR
+            # si había un mensaje creado anteriormente, márcalo como error si aplica
             print(f"[{self.nombre}] Error al enviar mensaje: {e}")
 
     def _crear_control(self, id_mensaje, tipo):
@@ -75,11 +99,7 @@ class ClienteChat:
         msg.cabecera.crc32 = zlib.crc32(msg.payload) & 0xffffffff
         return msg
 
-    def _simular_lectura(self, mensaje):
-        """Simula la lectura del mensaje y notifica."""
-        notificacion = self._crear_control(mensaje.id_mensaje, Mensaje.TIPO_LEIDO)
-        self.gestor.enviar_bytes(notificacion.codificar())
-        print(f"[{self.nombre}] Mensaje {mensaje.id_mensaje} marcado como leído.")
+    # Eliminada simulación de lectura para respetar turnos estrictos
 
     def detener(self):
         """Detiene la recepción y cierra conexión."""
