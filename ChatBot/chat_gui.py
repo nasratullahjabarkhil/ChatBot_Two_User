@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import scrolledtext
 import threading
-import random
 import zlib
 
 from gestorSocket import GestorSocket
@@ -57,6 +56,9 @@ class ChatGUI:
         self.recv_thread = None
         self.stop_event = threading.Event()
         self.protocol_id = 0x215A
+        # Estado de turnos: solo un mensaje pendiente
+        self.waiting_for_response_id = None  # si envié, espero RESPUESTA con este id
+        self.pending_request_id = None       # si recibí ENVIO, debo responder a este id
 
     def log(self, text):
         def _insert():
@@ -139,31 +141,36 @@ class ChatGUI:
                 except Exception as e:
                     self.log(f'[{usuario}] Error enviando ACK: {e}')
 
-                # simular lectura aleatoria
-                threading.Timer(random.uniform(1, 5), self._simular_lectura, args=(mensaje.cabecera.id_mensaje,)).start()
+                # Enforzar turno: no aceptar una nueva petición si ya hay una pendiente
+                if self.pending_request_id is not None:
+                    self.log(f'[{usuario}] Ya existe una solicitud pendiente (id={self.pending_request_id}). Ignorando nueva petición.')
+                elif self.waiting_for_response_id is not None:
+                    # No deberíamos recibir nuevas solicitudes si estamos esperando una respuesta
+                    self.log(f'[{usuario}] Esperando respuesta (id={self.waiting_for_response_id}). No se acepta nueva solicitud.')
+                else:
+                    # Marcar que debemos responder a este id; permitir teclear respuesta
+                    self.pending_request_id = mensaje.cabecera.id_mensaje
+                    self.root.after(0, lambda: self.status_label.config(text=f'Responder a {self.pending_request_id}', fg='blue'))
+                    # habilitar enviar para poder responder
+                    self.root.after(0, lambda: self.send_btn.config(state='normal'))
 
             elif tipo == Mensaje.TIPO_RECIBIDO:
                 self.log(f'[{usuario}] Confirmación: mensaje {mensaje.cabecera.id_mensaje} recibido')
             elif tipo == Mensaje.TIPO_LEIDO:
                 self.log(f'[{usuario}] Confirmación: mensaje {mensaje.cabecera.id_mensaje} leído')
+            elif tipo == Mensaje.TIPO_RESPUESTA:
+                # Si esperábamos respuesta de este id, liberamos el bloqueo
+                if self.waiting_for_response_id == mensaje.cabecera.id_mensaje:
+                    self.log(f'[{usuario}] Respuesta recibida para {mensaje.cabecera.id_mensaje}: {mensaje.texto()}')
+                    self.waiting_for_response_id = None
+                    # habilitar envío de nuevas peticiones
+                    self.root.after(0, lambda: self.send_btn.config(state='normal'))
+                    self.root.after(0, lambda: self.status_label.config(text='Conectado', fg='green'))
+                else:
+                    self.log(f'[{usuario}] RESPUESTA inesperada para id {mensaje.cabecera.id_mensaje}: {mensaje.texto()}')
 
         # cierre
         self.stop()
-
-    def _simular_lectura(self, id_mensaje):
-        usuario = self.name_entry.get()
-
-        if not self.gestor:
-            return
-        noti = Mensaje("", id_protocolo=self.protocol_id, id_mensaje=id_mensaje, tipo_operacion=Mensaje.TIPO_LEIDO)
-        noti.payload = b''
-        noti.cabecera.longitud_carga = 0
-        noti.cabecera.crc32 = zlib.crc32(noti.payload) & 0xffffffff
-        try:
-            self.gestor.enviar_bytes(noti.codificar())
-            self.log(f'[{usuario}] Mensaje {id_mensaje} marcado como leído (simulado)')
-        except Exception as e:
-            self.log(f'[{usuario}] Error enviando notificación LEIDO: {e}')
 
     def send_message(self):
         usuario = self.name_entry.get()
@@ -171,10 +178,28 @@ class ChatGUI:
         texto = self.msg_entry.get()
         if not texto or not self.gestor:
             return
-        msg = Mensaje(texto, id_protocolo=self.protocol_id)
         try:
-            self.gestor.enviar_bytes(msg.codificar())
-            self.log(f'[{usuario}] ({msg.id_mensaje}) {texto}')
+            if self.pending_request_id is not None:
+                # Debemos responder a una solicitud pendiente
+                resp = Mensaje(texto, id_protocolo=self.protocol_id, id_mensaje=self.pending_request_id, tipo_operacion=Mensaje.TIPO_RESPUESTA)
+                self.gestor.enviar_bytes(resp.codificar())
+                self.log(f'[{usuario}] Respuesta enviada a ({self.pending_request_id}): {texto}')
+                self.pending_request_id = None
+                # tras responder, quedamos libres para iniciar nueva petición
+                self.root.after(0, lambda: self.status_label.config(text='Conectado', fg='green'))
+                # botón enviar queda habilitado (ya lo estaba para responder)
+            else:
+                # Solo enviar nueva petición si no esperamos respuesta
+                if self.waiting_for_response_id is not None:
+                    self.log(f'[{usuario}] Aún esperando respuesta del mensaje {self.waiting_for_response_id}. No puedes enviar.')
+                    return
+                msg = Mensaje(texto, id_protocolo=self.protocol_id)
+                self.gestor.enviar_bytes(msg.codificar())
+                self.waiting_for_response_id = msg.id_mensaje
+                self.log(f'[{usuario}] ({msg.id_mensaje}) {texto} [esperando respuesta]')
+                # deshabilitar para bloquear hasta recibir respuesta
+                self.root.after(0, lambda: self.send_btn.config(state='disabled'))
+                self.root.after(0, lambda: self.status_label.config(text=f'Esperando respuesta {msg.id_mensaje}', fg='orange'))
         except Exception as e:
             self.log(f'[{usuario}] Error al enviar: {e}')
         finally:

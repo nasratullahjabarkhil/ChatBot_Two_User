@@ -13,6 +13,7 @@ class Mensaje:
     TIPO_RECIBIDO = 2
     TIPO_LEIDO = 3
     TIPO_ERROR = 4
+    TIPO_RESPUESTA = 5
 
     # Contador de clase protegido por lock para generar IDs incrementales
     _id_lock = threading.Lock()
