@@ -1,11 +1,22 @@
+"""Módulo que define la estructura de los mensajes (PDU) usados en el chat.
+
+Un `Mensaje` es la unión de una `Cabecera` y una carga
+útil (payload). El módulo cuida generación de ids thread-safe, cómputo de
+CRC32 e (de)serialización.
+"""
+
 import zlib
 import time
 import threading
 from cabecera import Cabecera
 
+
 class Mensaje:
-    """
-    Representa una PDU (cabecera + carga útil).
+    """Representa una PDU (cabecera + carga útil).
+
+    Notas del autor:
+    - Tiene tipos fijos (ENVIO, RECIBIDO, LEIDO, ERROR, RESPUESTA).
+    - Genera ids incrementales protegidos por un lock para seguridad entre hilos.
     """
 
     # Tipos de operación
@@ -20,23 +31,31 @@ class Mensaje:
     _next_id = 1
 
     def __init__(self, texto="", id_protocolo=0x0000, prioridad=0, id_mensaje=None, tipo_operacion=None):
-        """Permite opcionalmente especificar id_mensaje y tipo_operacion para crear
-        mensajes de control sin consumir IDs del generador."""
+        """Crea un Mensaje.
+
+        - `texto` puede ser str o bytes (se convierte a bytes si es str).
+        - Si `id_mensaje` se suministra, se reutiliza (útil para ACKs/controles).
+        - `tipo_operacion` por defecto es TIPO_ENVIO si no se indica.
+        """
+        # Aceptar texto como str o bytes; almacenar siempre bytes en payload
         self.payload = texto.encode('utf-8') if isinstance(texto, str) else texto
         self.id_protocolo = id_protocolo
         self.prioridad = prioridad
+
+        # Generación de id único si no se proporciona (thread-safe)
         if id_mensaje is None:
-            # Generar un id único por instancia de forma thread-safe
             with Mensaje._id_lock:
                 self.id_mensaje = Mensaje._next_id
                 Mensaje._next_id += 1
         else:
             self.id_mensaje = id_mensaje
 
+        # CRC32 sobre el payload para verificar integridad en el receptor
         self.crc32 = zlib.crc32(self.payload) & 0xffffffff
 
         op = tipo_operacion if tipo_operacion is not None else Mensaje.TIPO_ENVIO
 
+        # Construir la cabecera con los metadatos calculados
         self.cabecera = Cabecera(
             version=1,
             id_protocolo=self.id_protocolo,
@@ -54,15 +73,20 @@ class Mensaje:
 
     @classmethod
     def decodificar(cls, data):
-        """Convierte bytes en una instancia de Mensaje."""
+        """Convierte bytes en una instancia de Mensaje.
+
+        Valida CRC y reconstruye la instancia sin pasar por __init__ (para
+        no generar un nuevo id automáticamente).
+        """
         header_size = Cabecera.tamaño()
         header = Cabecera.desde_bytes(data[:header_size])
         payload = data[header_size: header_size + header.longitud_carga]
 
-        # Verificar integridad
+        # Verificar integridad con CRC32
         if zlib.crc32(payload) & 0xffffffff != header.crc32:
             raise ValueError("Error: CRC no coincide")
 
+        # Crear la instancia manualmente para evitar la lógica de generación de id
         instancia = cls.__new__(cls)
         instancia.payload = payload
         instancia.cabecera = header
@@ -73,7 +97,7 @@ class Mensaje:
         return instancia
 
     def texto(self):
-        """Devuelve el texto decodificado del payload."""
+        """Devuelve el texto decodificado del payload o una marca si es binario."""
         try:
             return self.payload.decode('utf-8')
         except:

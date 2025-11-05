@@ -1,0 +1,9 @@
+# Ignorar archivos de Word y PDF
+*.docx
+*.pdf
+
+# Ignorar archivos temporales del sistema y Python
+.DS_Store
+__pycache__/
+*.pyc
+
