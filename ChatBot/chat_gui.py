@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import scrolledtext
 import threading
 import zlib
+import random
 
 from gestorSocket import GestorSocket
 from mensaje import Mensaje
@@ -194,6 +195,21 @@ class ChatGUI:
                     self.gestor.enviar_bytes(ack.codificar())
                 except Exception as e:
                     self.log(f'[{usuario}] Error enviando ACK: {e}')
+
+                # Programar envío automático de confirmación de lectura (LEIDO)
+                def _send_leido():
+                    try:
+                        leido = Mensaje("", id_protocolo=self.protocol_id, id_mensaje=mensaje.id_mensaje, tipo_operacion=Mensaje.TIPO_LEIDO)
+                        leido.payload = b''
+                        leido.cabecera.longitud_carga = 0
+                        leido.cabecera.crc32 = zlib.crc32(leido.payload) & 0xffffffff
+                        self.gestor.enviar_bytes(leido.codificar())
+                        self.log(f'[{usuario}] Enviado LEIDO para {mensaje.cabecera.id_mensaje}')
+                    except Exception as e:
+                        self.log(f'[{usuario}] Error enviando LEIDO: {e}')
+
+                delay = random.uniform(1, 5)
+                threading.Timer(delay, _send_leido).start()
 
                 # Enforzar turno: no aceptar una nueva petición si ya hay una pendiente
                 if self.pending_request_id is not None:

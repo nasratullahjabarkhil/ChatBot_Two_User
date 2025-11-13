@@ -76,6 +76,21 @@ class ClienteChat:
                 ack = self._crear_control(mensaje.id_mensaje, Mensaje.TIPO_RECIBIDO)
                 self.gestor.enviar_bytes(ack.codificar())
 
+                # Programar confirmación de lectura aleatoria entre 1 y 5 segundos
+                def _enviar_leido():
+                    try:
+                        leido = self._crear_control(mensaje.id_mensaje, Mensaje.TIPO_LEIDO)
+                        self.gestor.enviar_bytes(leido.codificar())
+                        print(f"[{self.nombre}] Enviado LEIDO para {mensaje.id_mensaje}")
+                    except Exception as e:
+                        print(f"[{self.nombre}] Error enviando LEIDO: {e}")
+
+                import random
+                delay = random.uniform(1, 5)
+                t = threading.Timer(delay, _enviar_leido)
+                t.daemon = True
+                t.start()
+
                 # Enforzar turno: no aceptar nueva petición si ya hay una pendiente
                 if self.pending_request_id is not None:
                     print(f"[{self.nombre}] Solicitud ya pendiente (id={self.pending_request_id}). Ignorando nueva.")
