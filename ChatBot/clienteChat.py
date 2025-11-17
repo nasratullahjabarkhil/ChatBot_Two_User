@@ -17,9 +17,10 @@ class ClienteChat:
 
     Gestiona el envío/recepción de mensajes, estados (ENVIADO/RECIBIDO/LEIDO)
     y la lógica de turnos para asegurar que sólo haya una petición pendiente.
+    DNI DNI 40609084A = 0x1F41
     """
 
-    def __init__(self, nombre_usuario, gestor, protocol_id=0x215A):
+    def __init__(self, nombre_usuario, gestor, protocol_id=0x1F41):
         """Inicializa el cliente.
 
         nombre_usuario: nombre mostrado del participante.

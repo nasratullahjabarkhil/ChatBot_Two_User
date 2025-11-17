@@ -85,7 +85,8 @@ class ChatGUI:
         self.gestor = None
         self.recv_thread = None
         self.stop_event = threading.Event()
-        self.protocol_id = 0x215A
+        # Identificador de protocolo: DNI 40609084A -> suma=31(0x1F) + letra A=65(0x41) = 0x1F41
+        self.protocol_id = 0x1F41
         # Estado de turnos: solo un mensaje pendiente a la vez
         self.waiting_for_response_id = None  # si envié, espero RESPUESTA con este id
         self.pending_request_id = None       # si recibí ENVIO, debo responder a este id
